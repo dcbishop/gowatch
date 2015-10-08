@@ -11,12 +11,10 @@ import (
 
 	"gopkg.in/fatih/color.v0"
 	"gopkg.in/fsnotify.v1"
-
-	"github.com/spf13/afero"
 )
 
 func main() {
-	Main(os.Stdout, os.Stderr, afero.OsFs{}, os.Args)
+	Main(os.Stdout, os.Stderr)
 }
 
 func runTests(out, eout io.Writer) string {
@@ -63,7 +61,7 @@ func DoBuild(out, eout io.Writer) {
 }
 
 // Main function
-func Main(out io.Writer, eout io.Writer, fs afero.Fs, args []string) error {
+func Main(out io.Writer, eout io.Writer) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal(err)
