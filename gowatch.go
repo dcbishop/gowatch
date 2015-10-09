@@ -31,11 +31,30 @@ func clear(eout io.Writer) {
 
 // Builder contains a running building process.
 type Builder struct {
-	buildCmd MyCommand
-	testCmd  MyCommand
+	buildCmd ReusableCommand
+	testCmd  ReusableCommand
 
 	buildOut io.Reader
 	testOut  io.Reader
+}
+
+// NewBuilder make a new builder.
+func NewBuilder() Builder {
+	builder := Builder{}
+
+	builder.buildCmd = ReusableCommand{
+		Name:   "Build",
+		Args:   []string{"go", "build", "./..."},
+		Output: make(chan CommandResult),
+	}
+
+	builder.testCmd = ReusableCommand{
+		Name:   "Test",
+		Args:   []string{"go", "test", "-v", "./..."},
+		Output: make(chan CommandResult),
+	}
+
+	return builder
 }
 
 // Start the build.
@@ -45,10 +64,16 @@ func (builder *Builder) Start() {
 	builder.testCmd.Start()
 }
 
-// MyCommand stores a command to execute, if it is started again while the last execution is still running it will kill it silently.
-type MyCommand struct {
-	Cmd    *exec.Cmd
-	Lock   sync.Mutex
+// Kill the build.
+func (builder *Builder) Kill() {
+	builder.testCmd.Kill()
+	builder.buildCmd.Kill()
+}
+
+// ReusableCommand stores a command to execute, if it is started again while the last execution is still running it will kill it silently.
+type ReusableCommand struct {
+	cmd    *exec.Cmd
+	lock   sync.Mutex
 	Name   string
 	Args   []string
 	Output chan (CommandResult)
@@ -64,11 +89,11 @@ const (
 	StatusBad
 )
 
-// CommandResult stores the result of a completed MyCommand operation.
+// CommandResult stores the result of a completed ReusableCommand operation.
 type CommandResult struct {
-	output string
-	name   string
-	status Status
+	Output string
+	Name   string
+	Status Status
 }
 
 var ok = color.New(color.Bold, color.FgGreen).SprintFunc()
@@ -87,36 +112,36 @@ var StatusIcon = map[Status]string{
 func (cr *CommandResult) String() string {
 	state := ok
 	text := normal
-	if cr.status == StatusBad {
+	if cr.Status == StatusBad {
 		state = bad
-	} else if cr.status == StatusDirty {
+	} else if cr.Status == StatusDirty {
 		state = refresh
 		text = dim
 	}
 
-	return state(cr.name+" "+StatusIcon[cr.status]) + normal(": ") + text(cr.output)
+	return state(cr.Name+" "+StatusIcon[cr.Status]) + normal(": ") + text(cr.Output)
 }
 
 // Start begins executing the command.
-func (mcmd *MyCommand) Start() {
+func (mcmd *ReusableCommand) Start() {
 	mcmd.Kill()
 
-	mcmd.Lock.Lock()
+	mcmd.lock.Lock()
 	go func() {
-		cmd := mcmd.Cmd
+		cmd := mcmd.cmd
 
 		var outBuf bytes.Buffer
 		cmd.Stdout = &outBuf
 
 		err := cmd.Start()
-		mcmd.Lock.Unlock()
+		mcmd.lock.Unlock()
 
 		err = cmd.Wait()
 
 		cr := CommandResult{
-			output: outBuf.String(),
-			name:   mcmd.Name,
-			status: StatusOk,
+			Output: outBuf.String(),
+			Name:   mcmd.Name,
+			Status: StatusOk,
 		}
 
 		if err != nil {
@@ -130,7 +155,7 @@ func (mcmd *MyCommand) Start() {
 				return
 			}
 
-			cr.status = StatusBad
+			cr.Status = StatusBad
 		}
 
 		mcmd.Output <- cr
@@ -169,46 +194,21 @@ func ExitStatus(err error) int {
 }
 
 // Kill the running command.
-func (mcmd *MyCommand) Kill() {
+func (mcmd *ReusableCommand) Kill() {
 	{
-		mcmd.Lock.Lock()
-		if mcmd.Cmd != nil && mcmd.Cmd.Process != nil {
-			mcmd.Cmd.Process.Kill()
+		mcmd.lock.Lock()
+		if mcmd.cmd != nil && mcmd.cmd.Process != nil {
+			mcmd.cmd.Process.Kill()
 		}
-		mcmd.Lock.Unlock()
+		mcmd.lock.Unlock()
 	}
 	mcmd.reset()
 }
 
-// Kill the build.
-func (builder *Builder) Kill() {
-	builder.testCmd.Kill()
-	builder.buildCmd.Kill()
-}
-
-func (mcmd *MyCommand) reset() {
-	mcmd.Lock.Lock()
-	defer mcmd.Lock.Unlock()
-	mcmd.Cmd = exec.Command(mcmd.Args[0], mcmd.Args[1:]...)
-}
-
-// NewBuilder make a new builder.
-func NewBuilder() Builder {
-	builder := Builder{}
-
-	builder.buildCmd = MyCommand{
-		Name:   "Build",
-		Args:   []string{"go", "build", "./..."},
-		Output: make(chan CommandResult),
-	}
-
-	builder.testCmd = MyCommand{
-		Name:   "Test",
-		Args:   []string{"go", "test", "-v", "./..."},
-		Output: make(chan CommandResult),
-	}
-
-	return builder
+func (mcmd *ReusableCommand) reset() {
+	mcmd.lock.Lock()
+	defer mcmd.lock.Unlock()
+	mcmd.cmd = exec.Command(mcmd.Args[0], mcmd.Args[1:]...)
 }
 
 func display(out io.Writer, bRes, tRes CommandResult) {
@@ -240,8 +240,8 @@ func Main(out io.Writer, eout io.Writer) error {
 				}
 				builder.Start()
 
-				tRes.status = StatusDirty
-				bRes.status = StatusDirty
+				tRes.Status = StatusDirty
+				bRes.Status = StatusDirty
 			case err := <-watcher.Errors:
 				fmt.Fprintln(eout, "error:", err)
 			case op := <-builder.testCmd.Output:
