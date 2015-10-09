@@ -150,11 +150,6 @@ func (mcmd *ReusableCommand) Start() {
 				return
 			}
 
-			// Sometimes a command fails with error 1 but works next go, maybe files still being written to disk?
-			if ExitStatus(err) == 1 {
-				return
-			}
-
 			cr.Status = StatusBad
 		}
 
@@ -176,21 +171,6 @@ func WasKilled(err error) bool {
 		}
 	}
 	return false
-}
-
-// ExitStatus will check an error as returned by Command.Wait and return the exit code.
-func ExitStatus(err error) int {
-	switch e := err.(type) {
-	case *exec.ExitError:
-		switch se := e.Sys().(type) {
-		case syscall.WaitStatus:
-			return se.ExitStatus()
-		default:
-			panic("LINUX ONLY")
-		}
-	}
-
-	return 0
 }
 
 // Kill the running command.
