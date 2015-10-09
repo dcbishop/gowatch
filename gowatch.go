@@ -54,19 +54,47 @@ type MyCommand struct {
 	Output chan (CommandResult)
 }
 
-var ok = color.New(color.Bold, color.FgGreen).SprintFunc()
-var bad = color.New(color.Bold, color.FgRed).SprintFunc()
-var refresh = color.New(color.Bold, color.FgWhite).SprintFunc()
+// Status of CommandResult
+type Status int
+
+// Possible statuses for CommandResults
+const (
+	StatusDirty Status = iota
+	StatusOk
+	StatusBad
+)
 
 // CommandResult stores the result of a completed MyCommand operation.
 type CommandResult struct {
 	output string
 	name   string
-	status string
+	status Status
+}
+
+var ok = color.New(color.Bold, color.FgGreen).SprintFunc()
+var bad = color.New(color.Bold, color.FgRed).SprintFunc()
+var refresh = color.New(color.Bold, color.FgWhite).SprintFunc()
+var normal = color.New(color.FgWhite, color.Bold).SprintFunc()
+var dim = color.New(color.FgWhite, color.Faint).SprintFunc()
+
+// StatusIcon maps a Status state to a unicode icon.
+var StatusIcon = map[Status]string{
+	StatusDirty: "⟳",
+	StatusOk:    "✔",
+	StatusBad:   "✘",
 }
 
 func (cr *CommandResult) String() string {
-	return cr.name + " " + cr.status + ": " + cr.output
+	state := ok
+	text := normal
+	if cr.status == StatusBad {
+		state = bad
+	} else if cr.status == StatusDirty {
+		state = refresh
+		text = dim
+	}
+
+	return state(cr.name+" "+StatusIcon[cr.status]) + normal(": ") + text(cr.output)
 }
 
 // Start begins executing the command.
@@ -88,7 +116,7 @@ func (mcmd *MyCommand) Start() {
 		cr := CommandResult{
 			output: outBuf.String(),
 			name:   mcmd.Name,
-			status: ok("✔"),
+			status: StatusOk,
 		}
 
 		if err != nil {
@@ -102,7 +130,7 @@ func (mcmd *MyCommand) Start() {
 				return
 			}
 
-			cr.status = bad("✘")
+			cr.status = StatusBad
 		}
 
 		mcmd.Output <- cr
@@ -183,7 +211,7 @@ func NewBuilder() Builder {
 	return builder
 }
 
-func display(out io.Writer, bRes, tRes CommandResult, bDirty, tDirty bool) {
+func display(out io.Writer, bRes, tRes CommandResult) {
 	clear(out)
 	fmt.Fprintln(out, bRes.String())
 	fmt.Fprintln(out, tRes.String())
@@ -203,8 +231,6 @@ func Main(out io.Writer, eout io.Writer) error {
 	var bRes CommandResult
 	var tRes CommandResult
 
-	bDirty := true
-	tDirty := true
 	go func() {
 		for {
 			select {
@@ -214,20 +240,16 @@ func Main(out io.Writer, eout io.Writer) error {
 				}
 				builder.Start()
 
-				bDirty = true
-				tDirty = true
-				tRes.status = refresh("⟳")
-				bRes.status = refresh("⟳")
+				tRes.status = StatusDirty
+				bRes.status = StatusDirty
 			case err := <-watcher.Errors:
 				fmt.Fprintln(eout, "error:", err)
 			case op := <-builder.testCmd.Output:
 				tRes = op
-				tDirty = false
 			case op := <-builder.buildCmd.Output:
 				bRes = op
-				bDirty = false
 			}
-			display(out, bRes, tRes, tDirty, bDirty)
+			display(out, bRes, tRes)
 		}
 	}()
 
